@@ -1,0 +1,130 @@
+service: desaparecidos
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  region: us-east-1
+  stage: dev
+  timeout: 30
+  runtime: python3.12
+  environment: ${file(env.yml):${self:provider.stage}}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - rekognition:SearchFacesByImage
+        - rekognition:DetectFaces
+        - rekognition:CreateCollection
+        - rekognition:IndexFaces
+        - rekognition:ListCollections
+        - rekognition:DeleteCollection
+        - bedrock:InvokeModel
+        - polly:SynthesizeSpeech
+        - lex:RecognizeText
+        - lex:DeleteSession
+        - lex:GetSession
+        - lex:PutSession
+        - s3:GetObject
+        - s3:PutObject
+        - dynamodb:DescribeTable
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:createTable
+        - lambda:InvokeFunction
+        - sqs:SendMessage
+        - sqs:GetQueueUrl
+      Resource: "*"
+
+layers:
+  pillow:
+    path: layers/pillow
+    name: ${sls:stage}-pillow-layer
+    description: Biblioteca para processamento de imagem
+    compatibleRuntimes:
+      - python3.12
+    compatibleArchitectures:
+      - x86_64
+    allowedAccounts:
+      - "*"
+    retain: false
+  requests:
+    path: layers/requests
+    name: ${sls:stage}-requests-layer
+    description: Biblioteca para realização de requisições
+    compatibleRuntimes:
+      - python3.12
+    compatibleArchitectures:
+      - x86_64
+    allowedAccounts:
+      - "*"
+    retain: false
+  twilio:
+    path: layers/twilio
+    name: ${sls:stage}-twilio-layer
+    description: Camada contendo biblioteca para integração com o serviços de mensageria da Twilio
+    compatibleRuntimes:
+      - python3.12
+    compatibleArchitectures:
+      - x86_64
+    allowedAccounts:
+      - "*"
+    retain: false
+
+functions:
+  main:
+    name: ${sls:stage}-main-lambda
+    description: Função responsável por receber requisições da twilio e disparar ações para os serviços e/ou lambdas necessárias
+    package:
+      exclude:
+        - ./**
+      include:
+        - functions/main/**
+    layers:
+      - { Ref: TwilioLambdaLayer }
+    handler: functions.main.main.main
+    events:
+      - httpApi:
+          method: POST
+          path: /chatbot
+    environment:
+      API_GATEWAY_URL:
+        Fn::Join:
+          - ""
+          - - "https://"
+            - Ref: HttpApi
+            - ".execute-api.${self:provider.region}.amazonaws.com/chatbot"
+
+  store-face:
+    name: ${sls:stage}-store-face-lambda
+    description: Função responsável por receber foto de um desaparecido e salvar no banco de desaparecidos
+    package:
+      exclude:
+        - ./**
+      include:
+        - functions/store_face/**
+    layers:
+      - { Ref: PillowLambdaLayer }
+      - { Ref: RequestsLambdaLayer }
+    handler: functions.store_face.store_face.main
+
+  manage-records:
+    name: ${sls:stage}-manage-records-lambda
+    description: Função responsável por salvar/atualizar informações de pessoas desaparecidas e/ou localizadas no banco de dados
+    package:
+      exclude:
+        - ./**
+      include:
+        - functions/manage_records/**
+    handler: functions.manage_records.manage_records.main
+
+  generate-instructions:
+    name: ${sls:stage}-generate-instructions-lambda
+    description: Função responsável por gerar instruções após registro de pessoa desaparecida ou localizada
+    package:
+      exclude:
+        - ./**
+      include:
+        - functions/generate_instructions/**
+    handler: functions.generate_instructions.generate_instructions.main
